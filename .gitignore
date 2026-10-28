@@ -1,0 +1,19 @@
+# ==============================================================================
+# Fichier d'exclusion Git (.gitignore)
+# Projet : 347-docker-swarm-wordpress
+# ==============================================================================
+
+# Fichiers sensibles contenant des secrets et mots de passe
+secrets/*.txt
+!secrets/*.example.txt
+
+# Fichiers temporaires des éditeurs et OS
+.DS_Store
+Thumbs.db
+*.swp
+*.bak
+*~
+
+# Fichiers de log et répertoires d'environnement
+*.log
+.env

@@ -1,0 +1,284 @@
+# ==============================================================================
+# Fichier : docker-compose.yml
+# Projet  : 347-docker-swarm-wordpress (Module ETML 347)
+# Sujet   : Déploiement de WordPress hautement disponible avec Docker Swarm
+# ==============================================================================
+# NOTE : Conformément au cahier des charges, chaque directive est exhaustivment
+# documentée afin d'expliquer son rôle technique et sa contribution à l'architecture.
+# ==============================================================================
+
+# Version de la spécification Compose supportée nativement par le moteur Docker Swarm
+version: '3.8'
+
+# ------------------------------------------------------------------------------
+# SECTION SERVICES : Définition des conteneurs applicatifs du cluster
+# ------------------------------------------------------------------------------
+services:
+
+  # ----------------------------------------------------------------------------
+  # SERVICE 1 : Base de données MariaDB
+  # Rôle : Stocke de manière sécurisée et persistante les données relationnelles
+  # (articles, pages, métadonnées, comptes utilisateurs et réglages WordPress).
+  # ----------------------------------------------------------------------------
+  db:
+    # Image officielle MariaDB requise par le cahier des charges (série v12)
+    image: mariadb:12.0.1
+
+    # Variables d'environnement pour l'initialisation du serveur de base de données
+    environment:
+      # Chemin vers le secret Docker injecté contenant le mot de passe du superutilisateur root
+      # L'utilisation du suffixe _FILE permet de ne jamais écrire de mot de passe en clair dans ce fichier
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+
+      # Nom de la base de données créée automatiquement lors du premier démarrage
+      MARIADB_DATABASE: wordpress
+
+      # Nom du compte utilisateur applicatif dédié créé avec des droits restreints
+      MARIADB_USER: wp_user
+
+      # Chemin vers le secret Docker injecté contenant le mot de passe de l'utilisateur applicatif
+      MARIADB_PASSWORD_FILE: /run/secrets/db_password
+
+    # Déclaration des volumes de stockage pour le service de base de données
+    volumes:
+      # Montage du volume nommé 'db_data' dans le répertoire standard de stockage des tables MariaDB
+      # Permet la persistance intégrale des données même en cas d'arrêt ou redémarrage du conteneur
+      - db_data:/var/lib/mysql
+
+    # Attribution des réseaux pour le cloisonnement de la sécurité
+    networks:
+      # Connecté uniquement au réseau backend : MariaDB est isolée et inaccessible depuis le frontend et le proxy Nginx
+      - backend
+
+    # Association des secrets Docker montés dans /run/secrets/ à l'intérieur du conteneur
+    secrets:
+      # Secret contenant le mot de passe root de MariaDB
+      - db_root_password
+      # Secret contenant le mot de passe du compte utilisateur wordpress
+      - db_password
+
+    # Configuration spécifique au déploiement en mode cluster Docker Swarm
+    deploy:
+      # Une seule instance de base de données active pour éviter les conflits d'écriture sans cluster multi-maître
+      replicas: 1
+
+      # Contraintes de placement du service sur les nœuds du cluster
+      placement:
+        constraints:
+          # Verrouille l'exécution du service de base de données sur le nœud Manager
+          # Indispensable avec un volume local afin que la base retrouve toujours ses fichiers au même endroit
+          - node.role == manager
+
+      # Politique de redémarrage automatique en cas de dysfonctionnement
+      restart_policy:
+        # Redémarre automatiquement le conteneur s'il s'arrête suite à une erreur (exit code != 0)
+        condition: on-failure
+        # Délai d'attente avant de tenter un redémarrage
+        delay: 5s
+        # Nombre maximal de tentatives avant d'abandonner
+        max_attempts: 3
+        # Fenêtre temporelle d'évaluation du redémarrage
+        window: 120s
+
+      # Définition des quotas et réservations des ressources système (CPU et RAM)
+      resources:
+        # Plafond maximal de ressources allouées pour éviter la saturation du nœud hôte
+        limits:
+          # Limite l'utilisation du processeur à 0.50 cœur CPU
+          cpus: '0.50'
+          # Limite l'empreinte mémoire maximale à 512 Mégaoctets
+          memory: 512M
+        # Ressources matérielles réservées et garanties pour ce service
+        reservations:
+          # Garantie minimale de 0.20 cœur CPU
+          cpus: '0.20'
+          # Garantie minimale de 256 Mégaoctets de mémoire vive
+          memory: 256M
+
+  # ----------------------------------------------------------------------------
+  # SERVICE 2 : Moteur applicatif WordPress (PHP-FPM)
+  # Rôle : Exécute le code PHP de WordPress, traite les requêtes logiques et
+  # communique avec MariaDB via le backend.
+  # ----------------------------------------------------------------------------
+  wordpress:
+    # Image officielle WordPress FPM basée sur Alpine Linux requise par le cahier des charges
+    image: wordpress:6.8.2-fpm-alpine
+
+    # Variables d'environnement pour lier WordPress à la base de données
+    environment:
+      # Hôte et port de la base de données (résolution DNS interne Swarm vers le service 'db')
+      WORDPRESS_DB_HOST: db:3306
+
+      # Nom de la base de données configurée dans MariaDB
+      WORDPRESS_DB_NAME: wordpress
+
+      # Nom d'utilisateur de la base de données utilisé par WordPress
+      WORDPRESS_DB_USER: wp_user
+
+      # Fichier contenant le mot de passe de la base de données injecté de façon sécurisée par Docker Secrets
+      WORDPRESS_DB_PASSWORD_FILE: /run/secrets/db_password
+
+    # Déclaration des volumes partagés pour le code source et les médias
+    volumes:
+      # Montage du volume nommé partagé 'wp_data' dans la racine web du conteneur
+      # Permet la persistance des fichiers téléversés (uploads, plugins, thèmes)
+      # et le partage direct des fichiers statiques avec le proxy Nginx
+      - wp_data:/var/www/html
+
+    # Attribution des réseaux pour le service applicatif
+    networks:
+      # Connecté au réseau frontend pour recevoir les requêtes FastCGI transmises par Nginx
+      - frontend
+      # Connecté au réseau backend pour requêter la base de données MariaDB
+      - backend
+
+    # Association du secret Docker pour le mot de passe de connexion à MariaDB
+    secrets:
+      - db_password
+
+    # Configuration de l'orchestration Docker Swarm pour la haute disponibilité
+    deploy:
+      # Déploiement de 2 répliques en parallèle pour garantir la redondance et l'équilibrage de charge
+      replicas: 2
+
+      # Stratégie de mise à jour transparente sans interruption de service (Rolling Update)
+      update_config:
+        # Met à jour une seule réplique à la fois pour que le service reste toujours accessible
+        parallelism: 1
+        # Délai de temporisation de 10 secondes entre la mise à jour de chaque réplique
+        delay: 10s
+        # Ordre des opérations : démarre le nouveau conteneur avant d'arrêter l'ancien
+        order: start-first
+
+      # Politique de redémarrage automatique
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+
+      # Quotas et réservations de ressources
+      resources:
+        limits:
+          cpus: '0.60'
+          memory: 512M
+        reservations:
+          cpus: '0.20'
+          memory: 256M
+
+  # ----------------------------------------------------------------------------
+  # SERVICE 3 : Serveur Web & Reverse Proxy Nginx
+  # Rôle : Point d'entrée unique HTTP du cluster. Répartit le trafic entrant,
+  # sert directement les fichiers statiques mis en cache et transmet les scripts
+  # PHP aux répliques WordPress via le protocole FastCGI.
+  # ----------------------------------------------------------------------------
+  nginx:
+    # Image officielle Nginx basée sur Alpine Linux requise par le cahier des charges
+    image: nginx:1.28.0-alpine3.21
+
+    # Publication des ports sur le réseau Ingress du cluster Docker Swarm
+    ports:
+      # Port cible interne du conteneur Nginx
+      - target: 80
+        # Port publié et exposé sur les interfaces externes de tous les nœuds du cluster
+        published: 80
+        # Protocole réseau utilisé
+        protocol: tcp
+        # Mode ingress Swarm : route automatiquement le trafic de n'importe quel nœud vers les répliques Nginx
+        mode: ingress
+
+    # Fichiers de configuration injectés via le mécanisme natif Docker Configs
+    configs:
+      # Référence à la configuration définie dans la section 'configs' plus bas
+      - source: nginx_conf
+        # Emplacement de destination dans le conteneur Nginx (remplace la configuration par défaut)
+        target: /etc/nginx/conf.d/default.conf
+
+    # Montage du volume partagé pour accéder directement aux assets statiques
+    volumes:
+      # Monte le même volume 'wp_data' que le service WordPress
+      # Mode 'ro' (Read-Only) : Nginx ne fait que lire les assets statiques, garantissant une sécurité accrue
+      - wp_data:/var/www/html:ro
+
+    # Attribution du réseau pour le serveur web
+    networks:
+      # Connecté exclusivement au réseau frontend : Nginx ne peut pas communiquer directement avec la base de données
+      - frontend
+
+    # Configuration du déploiement Swarm pour le Reverse Proxy
+    deploy:
+      # 2 répliques de Nginx pour assurer la tolérance aux pannes sur le point d'entrée HTTP
+      replicas: 2
+
+      # Stratégie de mise à jour sans interruption
+      update_config:
+        parallelism: 1
+        delay: 5s
+        order: start-first
+
+      # Politique de redémarrage automatique
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+
+      # Quotas et réservations de ressources
+      resources:
+        limits:
+          cpus: '0.40'
+          memory: 256M
+        reservations:
+          cpus: '0.10'
+          memory: 64M
+
+# ------------------------------------------------------------------------------
+# SECTION CONFIGS : Gestion centralisée des configurations sans rebuild d'image
+# ------------------------------------------------------------------------------
+configs:
+  # Déclaration de la configuration du serveur virtuel Nginx
+  nginx_conf:
+    # Fichier source local sur le manager lu et distribué sur le cluster lors du déploiement
+    file: ./nginx/default.conf
+
+# ------------------------------------------------------------------------------
+# SECTION SECRETS : Gestion chiffrée des données sensibles dans Docker Swarm
+# ------------------------------------------------------------------------------
+secrets:
+  # Secret contenant le mot de passe root de MariaDB
+  db_root_password:
+    # Fichier texte local lu lors du 'stack deploy' et injecté en mémoire dans le conteneur
+    file: ./secrets/db_root_password.txt
+
+  # Secret contenant le mot de passe utilisateur applicatif de MariaDB
+  db_password:
+    file: ./secrets/db_password.txt
+
+# ------------------------------------------------------------------------------
+# SECTION VOLUMES : Déclaration du stockage persistant et partagé
+# ------------------------------------------------------------------------------
+volumes:
+  # Volume dédié aux fichiers de la base de données MariaDB
+  db_data:
+    # Pilote standard local stockant les données sur le nœud exécutant le service db
+    driver: local
+
+  # Volume partagé contenant le code source et les médias de WordPress (/var/www/html)
+  wp_data:
+    driver: local
+
+# ------------------------------------------------------------------------------
+# SECTION NETWORKS : Cloisonnement réseau de niveau 2 (Overlay Multi-Hôtes)
+# ------------------------------------------------------------------------------
+networks:
+  # Réseau Overlay 'frontend' : réservé à la communication entre le Reverse Proxy (Nginx) et WordPress
+  frontend:
+    # Pilote overlay permettant la communication sécurisée inter-conteneurs à travers différents hôtes physiques
+    driver: overlay
+    # Permet d'attacher manuellement des conteneurs supplémentaires (ex: pour le débogage)
+    attachable: true
+
+  # Réseau Overlay 'backend' : réservé à la communication sécurisée entre WordPress et la base de données MariaDB
+  backend:
+    driver: overlay
+    attachable: true
