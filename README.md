@@ -50,9 +50,6 @@ Ce projet a pour objectif le déploiement d'une infrastructure web **WordPress h
 
 ## 3. Guide de Déploiement Étape par Étape (CLI)
 
-> [!IMPORTANT]
-> Conformément au cahier des charges, l'intégralité du déploiement de la stack s'effectue **exclusivement en ligne de commande (CLI)** sur le nœud Manager (`swarm-manager`).
-
 ### Étape 1 : Initialisation du Cluster Docker Swarm
 
 Sur le nœud **Manager** (`10.228.242.214`) :
@@ -157,7 +154,7 @@ L'assistant d'installation standard de WordPress s'affiche alors, prêt pour l'i
 
 ---
 
-## 🧹 4. Commandes de Suppression Totale (Clean Uninstall)
+##  4. Commandes de Suppression Totale (Clean Uninstall)
 
 Conformément à la spécification (Section 7.3, point 4), voici la procédure exhaustive pour **supprimer totalement la stack Swarm ainsi que tous ses volumes et configurations associés** :
 
@@ -174,14 +171,9 @@ docker volume rm wp-stack_db_data wp-stack_wp_data
 # 4. (Optionnel) Vérifier qu'il ne reste aucun résidu
 docker volume ls | grep wp-stack
 docker service ls | grep wp-stack
-```
 
-> [!CAUTION]
-> La commande `docker volume rm wp-stack_db_data wp-stack_wp_data` effacera de manière irréversible toutes les données de la base de données et les médias téléversés sur WordPress.
 
----
-
-## 🛠️ 5. Commandes Utiles pour l'Exploitation et le Debug
+##  5. Commandes Utiles pour l'Exploitation et le Debug
 
 | Action | Commande |
 | :--- | :--- |
