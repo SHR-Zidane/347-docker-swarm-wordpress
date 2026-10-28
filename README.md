@@ -7,7 +7,7 @@
 
 ---
 
-## 📖 1. Présentation du Projet
+## 1. Présentation du Projet
 
 Ce projet a pour objectif le déploiement d'une infrastructure web **WordPress hautement disponible, évolutive et sécurisée** en utilisant le mode cluster **Docker Swarm**.
 
@@ -30,7 +30,7 @@ Ce projet a pour objectif le déploiement d'une infrastructure web **WordPress h
 
 ---
 
-## 📁 2. Structure des Fichiers
+## 2. Structure des Fichiers
 
 ```text
 347-docker-swarm-wordpress/
@@ -48,7 +48,7 @@ Ce projet a pour objectif le déploiement d'une infrastructure web **WordPress h
 
 ---
 
-## 🚀 3. Guide de Déploiement Étape par Étape (CLI)
+## 3. Guide de Déploiement Étape par Étape (CLI)
 
 > [!IMPORTANT]
 > Conformément au cahier des charges, l'intégralité du déploiement de la stack s'effectue **exclusivement en ligne de commande (CLI)** sur le nœud Manager (`swarm-manager`).
